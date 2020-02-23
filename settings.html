@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Irity TS Banner Settings</title>
+</head>
+<body style="text-align: center">
+
+
+<form action="/submit_settings" style="display: inline-block;padding: 100pt" id="settings-form">
+
+    <div style="text-align: center">
+        By submitting this information you agree to storage of your IP address for the purpose of identifying and applying your banner settings.
+        <br>
+        To request a copy or deletion of your personally identifying information contact geosearchef@geosearchef.de.
+    </div>
+
+    <div style="display: block">
+        <select name="background" style="margin-top: 15pt" form="settings-form">
+            %SELECT_OPTIONS%
+        </select>
+        <input type="submit" value="Submit">
+    </div>
+    <div style="text-align: center;margin-top: 3pt;font-size: 10pt">
+        Got another background suggestion? Contact me.
+    </div>
+</form>
+
+<div style="margin-top: 40pt;font-size: 10pt;text-align: center">
+    <a href="/banner" style="margin-bottom: 3pt;display: block">
+        <button>Show banner</button>
+    </a>
+    This will NOT save the settings entered above and may be subject to rate limiting.
+</div>
+
+</body>
+</html>

@@ -3,14 +3,17 @@ package de.geosearchef;
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.io.DataOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.DateFormat;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static java.util.Objects.nonNull;
 import static spark.Spark.get;
@@ -18,37 +21,65 @@ import static spark.Spark.port;
 
 public class TSBanner {
 
-	public static final int PORT = 1338;
-	public static final Duration REQUEST_INTERVAL = Duration.ofSeconds(1);//TODO
+	public static final int PORT = 23020;
+	public static final Duration REQUEST_INTERVAL = Duration.ofSeconds(15);
 	public static final int WIDTH = 1500;
 	public static final int HEIGHT = 500;
+	public static final Duration DISPLAY_TIME_BACKGROUND_SELECTION = Duration.ofMinutes(5);
+	public static final Path BACKGROUND_DIR = Paths.get("./backgrounds");
 
 	private static Map<String, Instant> previousRequests = new HashMap<>(); // rate limiting
 	private static Map<String, Instant> loginTimes = new HashMap<>(); // rate limiting
 
-	private static BufferedImage background;
+	private static Map<String, BufferedImage> backgrounds = new HashMap<>();
 	private static Font font;
 	private static Locale locale = new Locale("de", "DE");
 	private static Color fontColor = new Color(33, 33, 33);
+	private static String settingsHtml;
 
 	static {
 		try {
-			background = ImageIO.read(Paths.get("./background.png").toFile());
 			font = Font.createFont(Font.TRUETYPE_FONT, new FileInputStream(Paths.get("./CinzelDecorative-Regular.ttf").toFile()));
+
+			Files.list(BACKGROUND_DIR).forEach(p -> {
+				try {
+					backgrounds.put(p.getFileName().toString(), ImageIO.read(p.toFile()));
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			});
+
+			settingsHtml = new String(Files.readAllBytes(Paths.get("./settings.html")));
+			settingsHtml = settingsHtml.replace("%SELECT_OPTIONS%",
+					backgrounds.keySet().stream()
+							.map(b -> String.format("<option value=\"%s\">%s</option>", b, b))
+							.collect(Collectors.joining("\n"))
+			);
 		} catch (IOException | FontFormatException e) {
 			e.printStackTrace();
 		}
 	}
 
-	public static BufferedImage generateImage(Instant loginTime) throws IOException {
+	public static BufferedImage generateImage(Instant loginTime, Settings.UserSettings userSettings) throws IOException {
 		var image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_ARGB);
 
 		var g = (Graphics2D) image.getGraphics();
 		g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-//		g.drawImage(background, 0, 0, null);
-		g.setColor(new Color(143, 143, 143));
-		g.fillRect(0, 0, 2000, 2000);
+		if(userSettings.getBackgroundName() == null) {
+			g.setColor(new Color(143, 143, 143));
+			g.fillRect(0, 0, 2000, 2000);
+		} else {
+			g.drawImage(backgrounds.get(userSettings.getBackgroundName()), 0, 0, null);
+		}
+
+		if(userSettings.getBackgroundName() == null && loginTime.plus(DISPLAY_TIME_BACKGROUND_SELECTION).isAfter(Instant.now())) {
+			renderCentered(g,
+					"Click here to select a background", WIDTH / 2.0f, HEIGHT * 0.05f,
+					font.deriveFont(20.0f), new Color(255, 255, 255)
+			);
+		}
+
 
 		int highlightWidth = (int)(WIDTH * 0.7f);
 		int highlightHeight = (int)(HEIGHT * 0.6f);
@@ -64,6 +95,7 @@ public class TSBanner {
 		String greeting = "Welcome to Iritiy";
 		Calendar calendar = Calendar.getInstance(locale);
 		int time = calendar.get(Calendar.HOUR_OF_DAY) * 100 + calendar.get(Calendar.MINUTE);
+		time = 21_00;
 		if(time >= 23_30 || time < 1_00) {
 			greeting = "Have a good night";
 		} else if(time >= 22_00) {
@@ -114,14 +146,15 @@ public class TSBanner {
 
 
 		g.setColor(new Color(1f, 1f, 1f, 0.5f));
-		g.fillRect((int)(WIDTH * 0.204f), (int)(HEIGHT * 0.9f), (int)(WIDTH * 0.592f), (int)(HEIGHT * 0.1f));
+		g.fillRect((int)(WIDTH * 0.316f), (int)(HEIGHT * 0.9f), (int)(WIDTH * 0.368f), (int)(HEIGHT * 0.1f));
 		renderCentered(g,
-				"Work in progress (background is placeholder), suggestions appreciated", WIDTH / 2.0f, HEIGHT * 0.95f,
+				"Work in progress - suggestions appreciated", WIDTH / 2.0f, HEIGHT * 0.95f,
 				font.deriveFont(20.0f),
 				fontColor
 		);
 
 		// TODO: temps?
+		//TODO: select background
 
 		return image;
 	}
@@ -142,7 +175,7 @@ public class TSBanner {
 			if(nonNull(lastReq) && lastReq.plus(REQUEST_INTERVAL).isAfter(Instant.now())) {
 				System.out.println("denied request due to spam prevention");
 				res.status(429); // 429 TOO MANY REQUESTS
-				return res;
+				return "Settings saved.<br>Couldn't preview banner. Your request looks too spammy. Try again in " + REQUEST_INTERVAL.toSeconds() + " seconds";
 			}
 
 			if(lastReq == null || lastReq.plus(Duration.ofMinutes(10)).isBefore(Instant.now())) {
@@ -153,8 +186,8 @@ public class TSBanner {
 
 			res.raw().setContentType("image/png");
 
-			BufferedImage image = generateImage(loginTimes.get(req.ip()));
-			try (OutputStream out = res.raw().getOutputStream()) {
+			BufferedImage image = generateImage(loginTimes.get(req.ip()), Settings.getUserSettings(req.ip()));
+			try (var out = res.raw().getOutputStream()) {
 				ImageIO.write(image, "png", out);
 				out.flush();
 			} catch (IOException e) {
@@ -162,6 +195,28 @@ public class TSBanner {
 			}
 
 			return res.raw();
+		});
+
+		get("/settings", (req, res) -> {
+			res.raw().setContentType("text/html");
+			try (var out = new DataOutputStream(res.raw().getOutputStream())) {
+				out.write(settingsHtml.getBytes());
+				out.flush();
+			}
+			return res.raw();
+		});
+
+		get("/submit_settings", (req, res) -> {
+			if(! req.queryParams().contains("background") || !backgrounds.containsKey(req.queryParams("background"))) {
+				res.status(400);//bad request
+				return null;
+			}
+			var background = req.queryParams("background");
+
+			Settings.setUserSettings(new Settings.UserSettings(req.ip(), background));
+
+			res.redirect("/banner");
+			return res;
 		});
 	}
 }
