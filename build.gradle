@@ -6,7 +6,7 @@ plugins {
 group 'de.geosearchef'
 version '1.0-SNAPSHOT'
 
-sourceCompatibility = 1.8
+sourceCompatibility = 1.10
 
 sourceSets {
     main {
