@@ -49,7 +49,7 @@ public class Settings {
 		//TODO: font, position, ...?
 	}
 
-	static {
+	public static void init() {
 		if(! Files.exists(SETTINGS_FILE)) {
 			INSTANCE = new Settings();
 		} else {

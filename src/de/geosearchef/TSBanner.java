@@ -15,19 +15,19 @@ import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static java.util.Objects.nonNull;
 import static spark.Spark.get;
 import static spark.Spark.port;
 
 public class TSBanner {
 
 	public static final int PORT = 23020;
-	public static final Duration REQUEST_INTERVAL = Duration.ofSeconds(15);
+	public static final Duration REQUEST_COUNT_CLEAR_INTERVAL = Duration.ofMinutes(5);
 	public static final int WIDTH = 1500;
 	public static final int HEIGHT = 500;
-	public static final Duration DISPLAY_TIME_BACKGROUND_SELECTION = Duration.ofMinutes(5);
+	public static final Duration DISPLAY_TIME_BACKGROUND_SELECTION = Duration.ofMinutes(5 * 999999);
 	public static final Path BACKGROUND_DIR = Paths.get("./backgrounds");
 
+	private static Map<String, Integer> requestCount = new HashMap<>();
 	private static Map<String, Instant> previousRequests = new HashMap<>(); // rate limiting
 	private static Map<String, Instant> loginTimes = new HashMap<>(); // rate limiting
 
@@ -95,7 +95,7 @@ public class TSBanner {
 		String greeting = "Welcome to Iritiy";
 		Calendar calendar = Calendar.getInstance(locale);
 		int time = calendar.get(Calendar.HOUR_OF_DAY) * 100 + calendar.get(Calendar.MINUTE);
-		time = 21_00;
+//		time = 21_00;
 		if(time >= 23_30 || time < 1_00) {
 			greeting = "Have a good night";
 		} else if(time >= 22_00) {
@@ -154,7 +154,6 @@ public class TSBanner {
 		);
 
 		// TODO: temps?
-		//TODO: select background
 
 		return image;
 	}
@@ -168,33 +167,46 @@ public class TSBanner {
 	}
 
 	public static void main(String args[]) {
+		Settings.init();
+
 		port(PORT);
 
 		get("/banner", (req, res) -> {
-			Instant lastReq = previousRequests.get(req.ip());
-			if(nonNull(lastReq) && lastReq.plus(REQUEST_INTERVAL).isAfter(Instant.now())) {
-				System.out.println("denied request due to spam prevention");
-				res.status(429); // 429 TOO MANY REQUESTS
-				return "Settings saved.<br>Couldn't preview banner. Your request looks too spammy. Try again in " + REQUEST_INTERVAL.toSeconds() + " seconds";
-			}
+			try {
+				System.out.println("Request from " + req.ip());
+				Instant lastReq = previousRequests.get(req.ip());
+				int totalAttempts = 0;
+				synchronized (requestCount) {
+					totalAttempts = Optional.ofNullable(requestCount.get(req.ip())).orElse(0);
+					requestCount.put(req.ip(), totalAttempts + 1);
+				}
+				if(totalAttempts > 50) {
+					System.out.println("denied request due to spam prevention");
+					res.status(429); // 429 TOO MANY REQUESTS
+					return "Settings saved.<br>Couldn't preview banner. Your request looks too spammy. Try again later.";
+				}
 
-			if(lastReq == null || lastReq.plus(Duration.ofMinutes(10)).isBefore(Instant.now())) {
-				loginTimes.put(req.ip(), Instant.now());
-			}
+				if(lastReq == null || lastReq.plus(Duration.ofMinutes(10)).isBefore(Instant.now())) {
+					loginTimes.put(req.ip(), Instant.now());
+				}
 
-			previousRequests.put(req.ip(), Instant.now());
+				previousRequests.put(req.ip(), Instant.now());
 
-			res.raw().setContentType("image/png");
+				res.raw().setContentType("image/png");
 
-			BufferedImage image = generateImage(loginTimes.get(req.ip()), Settings.getUserSettings(req.ip()));
-			try (var out = res.raw().getOutputStream()) {
-				ImageIO.write(image, "png", out);
-				out.flush();
-			} catch (IOException e) {
+				BufferedImage image = generateImage(loginTimes.get(req.ip()), Settings.getUserSettings(req.ip()));
+				try (var out = res.raw().getOutputStream()) {
+					ImageIO.write(image, "png", out);
+					out.flush();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+
+				return res.raw();
+			} catch(Exception e) {
 				e.printStackTrace();
+				return "Encountered internal error while processing requested.";
 			}
-
-			return res.raw();
 		});
 
 		get("/settings", (req, res) -> {
@@ -209,7 +221,7 @@ public class TSBanner {
 		get("/submit_settings", (req, res) -> {
 			if(! req.queryParams().contains("background") || !backgrounds.containsKey(req.queryParams("background"))) {
 				res.status(400);//bad request
-				return null;
+				return "Bad request";
 			}
 			var background = req.queryParams("background");
 
@@ -218,5 +230,18 @@ public class TSBanner {
 			res.redirect("/banner");
 			return res;
 		});
+
+		startRequestCountClearer();
+	}
+
+	private static void startRequestCountClearer() {
+		new Thread(() -> {
+			while(true) {
+				synchronized (requestCount) {
+					requestCount.clear();
+				}
+				try { Thread.sleep(REQUEST_COUNT_CLEAR_INTERVAL.toMillis()); } catch(InterruptedException e) {e.printStackTrace();}
+			}
+		}).start();
 	}
 }
