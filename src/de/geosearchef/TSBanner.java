@@ -92,7 +92,7 @@ public class TSBanner {
 		g.fill(new Rectangle(highlightX, highlightY, highlightWidth, highlightHeight));
 
 
-		String greeting = "Welcome to Iritiy";
+		String greeting = "Welcome to OwOty";
 		Calendar calendar = Calendar.getInstance(locale);
 		int time = calendar.get(Calendar.HOUR_OF_DAY) * 100 + calendar.get(Calendar.MINUTE);
 //		time = 21_00;
